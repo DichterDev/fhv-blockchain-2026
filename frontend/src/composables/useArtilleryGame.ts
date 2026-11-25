@@ -30,6 +30,19 @@ export function useArtilleryGame() {
     return new Contract(CONTRACT_ADDRESS, ARTILLERY_ABI, wallet.getProvider());
   }
 
+  function decodeTxError(err: any, fallback: string): string {
+    const data = err?.data || err?.info?.error?.data || err?.error?.data;
+    if (data && data !== "0x") {
+      try {
+        const decoded = getReadContract().interface.parseError(data);
+        if (decoded) {
+          return `REVERTED: ${decoded.name}`;
+        }
+      } catch {}
+    }
+    return err?.shortMessage || err?.message || fallback;
+  }
+
   function parseGameTuple(gameId: number, raw: any): GameState {
     return {
       gameId,
@@ -73,6 +86,10 @@ export function useArtilleryGame() {
     return Math.max(0, deadline - currentBlock.value);
   });
 
+  function clearLastShot() {
+    lastShot.value = null;
+  }
+
   async function refreshLobby() {
     try {
       const contract = getReadContract();
@@ -96,9 +113,15 @@ export function useArtilleryGame() {
         fetched.push(parseGameTuple(i, raw));
       }
       openGames.value = fetched;
+      if (
+        statusMessage.value.startsWith("LOBBY ERROR") ||
+        statusMessage.value === "CONTRACT NOT FOUND ON CURRENT NETWORK"
+      ) {
+        statusMessage.value = "READY FOR DEPLOYMENT";
+      }
     } catch (err: any) {
       console.error("refreshLobby error:", err);
-      statusMessage.value = `LOBBY ERROR: ${err?.shortMessage || err?.message || "UNKNOWN"}`;
+      statusMessage.value = `LOBBY ERROR: ${err?.shortMessage || err?.message || "CONTRACT NOT FOUND"}`;
     }
   }
 
@@ -150,7 +173,6 @@ export function useArtilleryGame() {
     stopPolling();
     pollTimer = window.setInterval(async () => {
       const g = activeGame.value;
-      // Only poll while waiting for Player 2 OR waiting for the opponent's move
       const shouldPoll =
         !g ||
         g.status === GameStatus.WaitingForPlayer ||
@@ -198,16 +220,13 @@ export function useArtilleryGame() {
         createdId = Number(await contract.nextGameId()) - 1;
       }
 
+      lastShot.value = null;
       await loadGame(createdId);
       startPolling(createdId);
       await wallet.refreshBalance();
       statusMessage.value = `ARENA #${createdId} ONLINE // AWAITING CHALLENGER`;
     } catch (err: any) {
-      const data = err?.data || err?.info?.error?.data || err?.error?.data;
-      const decoded = data ? getReadContract().interface.parseError(data) : null;
-      statusMessage.value = decoded
-        ? `REVERTED: ${decoded.name}`
-        : err?.shortMessage || err?.message || "TX FAILED";
+      statusMessage.value = decodeTxError(err, "CREATE FAILED");
     } finally {
       isTxPending.value = false;
     }
@@ -221,16 +240,13 @@ export function useArtilleryGame() {
       const tx = await contract.joinGame(gameId, { value: joinFee.value });
       await tx.wait();
 
+      lastShot.value = null;
       await loadGame(gameId);
       startPolling(gameId);
       await wallet.refreshBalance();
       statusMessage.value = `CONNECTED TO ARENA #${gameId} // COMBAT LIVE`;
     } catch (err: any) {
-      const data = err?.data || err?.info?.error?.data || err?.error?.data;
-      const decoded = data ? getReadContract().interface.parseError(data) : null;
-      statusMessage.value = decoded
-        ? `REVERTED: ${decoded.name}`
-        : err?.shortMessage || err?.message || "TX FAILED";
+      statusMessage.value = decodeTxError(err, "JOIN FAILED");
     } finally {
       isTxPending.value = false;
     }
@@ -288,11 +304,7 @@ export function useArtilleryGame() {
               : "SHOT FLEW OFF RADAR!";
       }
     } catch (err: any) {
-      const data = err?.data || err?.info?.error?.data || err?.error?.data;
-      const decoded = data ? getReadContract().interface.parseError(data) : null;
-      statusMessage.value = decoded
-        ? `REVERTED: ${decoded.name}`
-        : err?.shortMessage || err?.message || "TX FAILED";
+      statusMessage.value = decodeTxError(err, "FIRE FAILED");
     } finally {
       isTxPending.value = false;
     }
@@ -308,11 +320,7 @@ export function useArtilleryGame() {
       await loadGame(activeGame.value.gameId);
       statusMessage.value = "VICTORY CLAIMED BY OPPONENT TIMEOUT";
     } catch (err: any) {
-      const data = err?.data || err?.info?.error?.data || err?.error?.data;
-      const decoded = data ? getReadContract().interface.parseError(data) : null;
-      statusMessage.value = decoded
-        ? `REVERTED: ${decoded.name}`
-        : err?.shortMessage || err?.message || "TX FAILED";
+      statusMessage.value = decodeTxError(err, "TIMEOUT NOT REACHED YET");
     } finally {
       isTxPending.value = false;
     }
@@ -335,6 +343,7 @@ export function useArtilleryGame() {
     playerRole,
     isMyTurn,
     blocksRemainingForTimeout,
+    clearLastShot,
     refreshLobby,
     loadGame,
     startPolling,
