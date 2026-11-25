@@ -1,0 +1,14 @@
+[tools]
+node = "22"
+
+[tasks.compile]
+run = "npx hardhat compile"
+
+[tasks.test]
+run = "npx hardhat test"
+
+[tasks.deploy-local]
+run = "npx hardhat ignition deploy ./ignition/modules/Artillery.ts --network ganache"
+
+[tasks.deploy-sepolia]
+run = "npx hardhat ignition deploy ./ignition/modules/Artillery.ts --network sepolia"

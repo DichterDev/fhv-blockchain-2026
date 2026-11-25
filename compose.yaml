@@ -1,0 +1,16 @@
+services:
+  ganache:
+    image: trufflesuite/ganache:latest
+    container_name: artillery-ganache
+    ports:
+      - "8545:8545"
+    command: >
+      --wallet.mnemonic "test test test test test test test test test test test junk"
+      --wallet.defaultBalance 1000
+      --chain.chainId 1337
+      --database.dbPath /data
+    volumes:
+      - ganache-data:/data
+
+volumes:
+  ganache-data:
