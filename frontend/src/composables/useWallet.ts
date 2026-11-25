@@ -1,16 +1,21 @@
 import { ref, computed } from "vue";
 import { BrowserProvider, JsonRpcProvider, formatEther, type Signer } from "ethers";
 
-const LOCAL_RPC = import.meta.env.VITE_LOCAL_RPC_URL || "http://127.0.0.1:8545";
+const RAW_RPC = import.meta.env.VITE_RPC_URL || "http://127.0.0.1:8545";
+const RPC_URL = RAW_RPC.startsWith("/") ? `${window.location.origin}${RAW_RPC}` : RAW_RPC;
+const TARGET_CHAIN_ID = Number(import.meta.env.VITE_CHAIN_ID || 1337);
 
 const address = ref<string>("");
 const balance = ref<string>("0.0000");
-const chainId = ref<number>(1337);
+const chainId = ref<number>(TARGET_CHAIN_ID);
 const isConnected = ref<boolean>(false);
 const walletError = ref<string | null>(null);
 
 let activeSigner: Signer | null = null;
-let readProvider: BrowserProvider | JsonRpcProvider | null = null;
+const readProvider = new JsonRpcProvider(RPC_URL, undefined, {
+  staticNetwork: true,
+  cacheTimeout: -1,
+});
 let listenersBound = false;
 
 export function useWallet() {
@@ -20,7 +25,7 @@ export function useWallet() {
   });
 
   async function refreshBalance() {
-    if (!readProvider || !address.value) return;
+    if (!address.value) return;
     try {
       const bal = await readProvider.getBalance(address.value);
       balance.value = Number(formatEther(bal)).toFixed(4);
@@ -38,13 +43,22 @@ export function useWallet() {
     try {
       const provider = new BrowserProvider(eth);
       await provider.send("eth_requestAccounts", []);
-      const signer = await provider.getSigner();
-      const network = await provider.getNetwork();
 
-      readProvider = provider;
+      const network = await provider.getNetwork();
+      if (Number(network.chainId) !== TARGET_CHAIN_ID) {
+        await eth.request({
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: `0x${TARGET_CHAIN_ID.toString(16)}` }],
+        });
+      }
+
+      const activeProvider = new BrowserProvider(eth);
+      const signer = await activeProvider.getSigner();
+      const activeNetwork = await activeProvider.getNetwork();
+
       activeSigner = signer;
       address.value = await signer.getAddress();
-      chainId.value = Number(network.chainId);
+      chainId.value = Number(activeNetwork.chainId);
       isConnected.value = true;
 
       await refreshBalance();
@@ -76,12 +90,6 @@ export function useWallet() {
   }
 
   function getProvider() {
-    if (!readProvider) {
-      readProvider = new JsonRpcProvider(LOCAL_RPC, undefined, {
-        staticNetwork: true,
-        cacheTimeout: -1,
-      });
-    }
     return readProvider;
   }
 

@@ -202,7 +202,11 @@ export function useArtilleryGame() {
       await wallet.refreshBalance();
       statusMessage.value = `ARENA #${createdId} ONLINE // AWAITING CHALLENGER`;
     } catch (err: any) {
-      statusMessage.value = err?.shortMessage || err?.message || "CREATE FAILED";
+      const data = err?.data || err?.info?.error?.data || err?.error?.data;
+      const decoded = data ? getReadContract().interface.parseError(data) : null;
+      statusMessage.value = decoded
+        ? `REVERTED: ${decoded.name}`
+        : err?.shortMessage || err?.message || "TX FAILED";
     } finally {
       isTxPending.value = false;
     }
@@ -221,7 +225,11 @@ export function useArtilleryGame() {
       await wallet.refreshBalance();
       statusMessage.value = `CONNECTED TO ARENA #${gameId} // COMBAT LIVE`;
     } catch (err: any) {
-      statusMessage.value = err?.shortMessage || err?.message || "JOIN FAILED";
+      const data = err?.data || err?.info?.error?.data || err?.error?.data;
+      const decoded = data ? getReadContract().interface.parseError(data) : null;
+      statusMessage.value = decoded
+        ? `REVERTED: ${decoded.name}`
+        : err?.shortMessage || err?.message || "TX FAILED";
     } finally {
       isTxPending.value = false;
     }
@@ -279,7 +287,11 @@ export function useArtilleryGame() {
               : "SHOT FLEW OFF RADAR!";
       }
     } catch (err: any) {
-      statusMessage.value = err?.shortMessage || err?.message || "FIRE FAILED";
+      const data = err?.data || err?.info?.error?.data || err?.error?.data;
+      const decoded = data ? getReadContract().interface.parseError(data) : null;
+      statusMessage.value = decoded
+        ? `REVERTED: ${decoded.name}`
+        : err?.shortMessage || err?.message || "TX FAILED";
     } finally {
       isTxPending.value = false;
     }
@@ -295,7 +307,11 @@ export function useArtilleryGame() {
       await loadGame(activeGame.value.gameId);
       statusMessage.value = "VICTORY CLAIMED BY OPPONENT TIMEOUT";
     } catch (err: any) {
-      statusMessage.value = err?.shortMessage || "TIMEOUT NOT REACHED YET";
+      const data = err?.data || err?.info?.error?.data || err?.error?.data;
+      const decoded = data ? getReadContract().interface.parseError(data) : null;
+      statusMessage.value = decoded
+        ? `REVERTED: ${decoded.name}`
+        : err?.shortMessage || err?.message || "TX FAILED";
     } finally {
       isTxPending.value = false;
     }
