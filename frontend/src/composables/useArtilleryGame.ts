@@ -96,8 +96,9 @@ export function useArtilleryGame() {
         fetched.push(parseGameTuple(i, raw));
       }
       openGames.value = fetched;
-    } catch {
-      statusMessage.value = "CONTRACT NOT FOUND ON CURRENT NETWORK";
+    } catch (err: any) {
+      console.error("refreshLobby error:", err);
+      statusMessage.value = `LOBBY ERROR: ${err?.shortMessage || err?.message || "UNKNOWN"}`;
     }
   }
 
