@@ -6,7 +6,7 @@ QUADLET_DIR="$HOME/.config/containers/systemd"
 
 mkdir -p "$QUADLET_DIR"
 
-podman build -t localhost/bct-frontend:latest "$SCRIPT_DIR/frontend"
+podman build -t localhost/bct-frontend:latest -f "$SCRIPT_DIR/frontend/Containerfile" "$SCRIPT_DIR"
 
 for f in "$SCRIPT_DIR"/*.container; do
   cp "$f" "$QUADLET_DIR/blockchain-$(basename "$f")"
