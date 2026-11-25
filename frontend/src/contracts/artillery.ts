@@ -20,17 +20,19 @@ export const ARTILLERY_ABI = [
   "event GameEnded(uint256 indexed gameId, address indexed winner, uint256 payout, string reason)",
 ] as const;
 
-export enum GameStatus {
-  WaitingForPlayer = 0,
-  Active = 1,
-  Finished = 2,
-}
+export const GameStatus = {
+  WaitingForPlayer: 0,
+  Active: 1,
+  Finished: 2,
+} as const;
+export type GameStatus = (typeof GameStatus)[keyof typeof GameStatus];
 
-export enum WeaponType {
-  Standard = 0,
-  Mortar = 1,
-  BunkerBuster = 2,
-}
+export const WeaponType = {
+  Standard: 0,
+  Mortar: 1,
+  BunkerBuster: 2,
+} as const;
+export type WeaponType = (typeof WeaponType)[keyof typeof WeaponType];
 
 export interface WeaponSpec {
   id: WeaponType;
