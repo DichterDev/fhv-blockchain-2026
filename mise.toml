@@ -2,13 +2,28 @@
 node = "22"
 
 [tasks.compile]
+dir = "blockchain"
 run = "npx hardhat compile"
 
 [tasks.test]
+dir = "blockchain"
 run = "npx hardhat test"
 
 [tasks.deploy-local]
+dir = "blockchain"
 run = "npx hardhat ignition deploy ./ignition/modules/Artillery.ts --network ganache"
 
 [tasks.deploy-sepolia]
+dir = "blockchain"
 run = "npx hardhat ignition deploy ./ignition/modules/Artillery.ts --network sepolia"
+
+[tasks.chain]
+run = "docker compose up -d"
+
+[tasks.dev]
+dir = "frontend"
+run = "npm run dev"
+
+[tasks.build]
+dir = "frontend"
+run = "npm run build"
