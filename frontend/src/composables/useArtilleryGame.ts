@@ -203,7 +203,11 @@ export function useArtilleryGame() {
     statusMessage.value = "DEPLOYING ARENA...";
     try {
       const contract = new Contract(CONTRACT_ADDRESS, ARTILLERY_ABI, wallet.getSigner());
-      const tx = await contract.createGame({ value: joinFee.value });
+      const estimatedGas = await contract.createGame.estimateGas({ value: joinFee.value });
+      const tx = await contract.createGame({
+        value: joinFee.value,
+        gasLimit: (estimatedGas * 130n) / 100n,
+      });
       const receipt = await tx.wait();
 
       let createdId: number | null = null;
@@ -265,9 +269,15 @@ export function useArtilleryGame() {
     try {
       const contract = new Contract(CONTRACT_ADDRESS, ARTILLERY_ABI, wallet.getSigner());
 
-      const tx = await contract.fire(gameId, angle, power, weapon, {
+      const estimatedGas = await contract.fire.estimateGas(gameId, angle, power, weapon, {
         value: weaponSpec.costWei,
       });
+
+      const tx = await contract.fire(gameId, angle, power, weapon, {
+        value: weaponSpec.costWei,
+        gasLimit: 500_000n,
+      });
+
       const receipt = await tx.wait();
 
       for (const log of receipt.logs) {

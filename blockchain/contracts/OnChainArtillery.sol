@@ -96,8 +96,8 @@ contract OnChainArtillery {
     g.status = GameStatus.WaitingForPlayer;
     g.p1X = 4;
     g.p2X = 27;
-    g.p1Hp = 100;
-    g.p2Hp = 100;
+    g.p1Hp = 10;
+    g.p2Hp = 10;
     g.prizePool = msg.value;
 
     uint256 seed = uint256(keccak256(abi.encode(block.prevrandao, msg.sender, gameId)));

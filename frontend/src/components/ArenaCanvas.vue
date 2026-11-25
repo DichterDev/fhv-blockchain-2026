@@ -22,8 +22,8 @@ const props = defineProps<{
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 let animFrameId = 0;
 
-// Visual terrain buffer: freezes during projectile flight and carves out on impact
-const renderedTerrain = ref<number[]>([...props.game.terrain]);
+// Plain non-reactive buffer: freezes during projectile flight and carves out on impact
+let renderedTerrain: number[] = [...(props.game.terrain ?? [])];
 
 interface Particle {
   x: number;
@@ -48,43 +48,54 @@ let floatingPopup: { x: number; y: number; text: string; life: number } | null =
 watch(
   () => props.game.terrain,
   (newTerrain) => {
-    if (!activeProjectile) {
-      renderedTerrain.value = [...newTerrain];
+    if (!activeProjectile && Array.isArray(newTerrain)) {
+      renderedTerrain = [...newTerrain];
     }
   },
-  { deep: true },
 );
 
 watch(
   () => props.lastShot,
   (shot) => {
     if (!shot) return;
-    // Freeze pre-impact terrain so projectile flies against the terrain it actually hit
-    renderedTerrain.value = [...shot.preTerrain];
 
-    const isP1Shooter = shot.shooter.toLowerCase() === props.game.player1.toLowerCase();
+    const baseTerrain = Array.isArray(shot.preTerrain)
+      ? shot.preTerrain
+      : (props.game.terrain ?? []);
+
+    // Freeze pre-impact terrain so projectile flies against the terrain it actually hit
+    renderedTerrain = [...baseTerrain];
+
+    const isP1Shooter = shot.shooter?.toLowerCase() === props.game.player1?.toLowerCase();
     const startCol = isP1Shooter ? props.game.p1X : props.game.p2X;
     const sim = simulateShotPreview(
-      shot.preTerrain,
+      baseTerrain,
       startCol,
       shot.angle,
       shot.power,
-      shot.preWind,
+      shot.preWind ?? props.game.wind,
       shot.weapon,
     );
     const weaponSpec = WEAPONS[shot.weapon] ?? WEAPONS[0];
+
+    if (!sim?.points?.length) {
+      renderedTerrain = [...(props.game.terrain ?? [])];
+      activeProjectile = null;
+      return;
+    }
+
     activeProjectile = {
       points: sim.points,
       index: 0,
       color: weaponSpec.color,
-      damage: shot.damageDealt,
+      damage: shot.damageDealt ?? 0,
     };
   },
 );
 
 function spawnExplosion(wx: number, wy: number, color: string, dmg: number) {
-  // Now apply the post-impact terrain crater!
-  renderedTerrain.value = [...props.game.terrain];
+  // Apply the post-impact terrain crater
+  renderedTerrain = [...(props.game.terrain ?? [])];
 
   for (let i = 0; i < 36; i++) {
     const a = Math.random() * Math.PI * 2;
@@ -109,7 +120,7 @@ function render() {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
 
-  const terrain = renderedTerrain.value;
+  const terrain = renderedTerrain;
   const W = canvas.width;
   const H = canvas.height;
   const scaleX = W / WORLD_WIDTH;
@@ -212,7 +223,8 @@ function render() {
   }
 
   if (activeProjectile) {
-    const p = activeProjectile.points[activeProjectile.index];
+    const pts = activeProjectile.points;
+    const p = pts[activeProjectile.index];
     if (p) {
       ctx.beginPath();
       ctx.arc(toCanvasX(p.x), toCanvasY(p.y), 6, 0, Math.PI * 2);
@@ -221,13 +233,17 @@ function render() {
       ctx.shadowBlur = 16;
       ctx.fill();
       ctx.shadowBlur = 0;
+    }
 
-      activeProjectile.index += 2;
-      if (activeProjectile.index >= activeProjectile.points.length) {
-        const lastPt = activeProjectile.points[activeProjectile.points.length - 1];
+    activeProjectile.index += 2;
+    if (!p || activeProjectile.index >= pts.length) {
+      const lastPt = pts[pts.length - 1];
+      if (lastPt) {
         spawnExplosion(lastPt.x, lastPt.y, activeProjectile.color, activeProjectile.damage);
-        activeProjectile = null;
+      } else {
+        renderedTerrain = [...(props.game.terrain ?? [])];
       }
+      activeProjectile = null;
     }
   }
 
@@ -236,7 +252,7 @@ function render() {
     pt.y += pt.vy * 4;
     pt.life -= 0.03;
     ctx.beginPath();
-    ctx.arc(toCanvasX(pt.x), toCanvasY(pt.y), 3 * pt.life, 0, Math.PI * 2);
+    ctx.arc(toCanvasX(pt.x), toCanvasY(pt.y), Math.max(0, 3 * pt.life), 0, Math.PI * 2);
     ctx.fillStyle = pt.color;
     ctx.globalAlpha = Math.max(0, pt.life);
     ctx.fill();
