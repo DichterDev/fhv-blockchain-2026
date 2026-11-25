@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import { WEAPONS, type WeaponType } from "../contracts/artillery";
 import { snapAngle } from "../game/physics";
 
@@ -18,13 +19,15 @@ const emit = defineEmits<{
   (e: "fire"): void;
   (e: "claimTimeout"): void;
 }>();
+
+const activeWeaponSpec = computed(() => WEAPONS[weapon.value] ?? WEAPONS[0]);
 </script>
 
 <template>
   <div
     class="grid grid-cols-1 lg:grid-cols-12 gap-4 p-4 rounded-xl border border-fuchsia-500/40 bg-slate-950/90 neon-border-pink"
   >
-    <!-- Weapon Selector -->
+    <!-- Weapon Selector with ETH Cost -->
     <div class="lg:col-span-4 flex flex-col gap-2">
       <span class="text-xs text-fuchsia-400 font-arcade tracking-wider">
         01 // SELECT ORDNANCE
@@ -49,6 +52,9 @@ const emit = defineEmits<{
           </div>
           <div class="text-[11px] text-slate-200 font-bold mt-1 truncate">
             {{ w.name }}
+          </div>
+          <div class="text-[10px] text-emerald-400 font-bold mt-1">
+            {{ w.costLabel }}
           </div>
         </button>
       </div>
@@ -111,9 +117,15 @@ const emit = defineEmits<{
       <button
         @click="emit('fire')"
         :disabled="!canFire || isTxPending"
-        class="w-full py-3 rounded-lg font-arcade font-black tracking-widest text-sm transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed bg-gradient-to-r from-fuchsia-600 to-cyan-500 text-slate-950 shadow-[0_0_20px_rgba(217,70,239,0.5)] hover:brightness-110"
+        class="w-full py-3 rounded-lg font-arcade font-black tracking-widest text-xs transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed bg-gradient-to-r from-fuchsia-600 to-cyan-500 text-slate-950 shadow-[0_0_20px_rgba(217,70,239,0.5)] hover:brightness-110"
       >
-        {{ isTxPending ? "TRANSMITTING..." : canFire ? "FIRE PAYLOAD" : "ENEMY TURN" }}
+        {{
+          isTxPending
+            ? "TRANSMITTING..."
+            : canFire
+              ? `FIRE (${activeWeaponSpec.costLabel})`
+              : "ENEMY TURN"
+        }}
       </button>
 
       <button

@@ -4,6 +4,7 @@ import {
   ARTILLERY_ABI,
   CONTRACT_ADDRESS,
   GameStatus,
+  WEAPONS,
   WeaponType,
   type GameState,
   type ShotResult,
@@ -20,6 +21,7 @@ const statusMessage = ref<string>("READY FOR DEPLOYMENT");
 const lastShot = ref<ShotResult | null>(null);
 
 let pollTimer: number | null = null;
+let isPollingInFlight = false;
 
 export function useArtilleryGame() {
   const wallet = useWallet();
@@ -33,8 +35,6 @@ export function useArtilleryGame() {
       gameId,
       player1: raw.player1,
       player2: raw.player2,
-      p1SessionKey: raw.p1SessionKey,
-      p2SessionKey: raw.p2SessionKey,
       currentTurn: raw.currentTurn,
       winner: raw.winner,
       status: Number(raw.status) as GameStatus,
@@ -96,7 +96,7 @@ export function useArtilleryGame() {
         fetched.push(parseGameTuple(i, raw));
       }
       openGames.value = fetched;
-    } catch (err: any) {
+    } catch {
       statusMessage.value = "CONTRACT NOT FOUND ON CURRENT NETWORK";
     }
   }
@@ -108,15 +108,64 @@ export function useArtilleryGame() {
       wallet.getProvider().getBlockNumber(),
     ]);
     currentBlock.value = blockNum;
-    activeGame.value = parseGameTuple(gameId, raw);
+
+    const prevGame = activeGame.value;
+    const nextGame = parseGameTuple(gameId, raw);
+
+    // Detect if turnCount advanced while polling (e.g., opponent fired in another window)
+    if (
+      prevGame &&
+      prevGame.gameId === gameId &&
+      nextGame.turnCount > prevGame.turnCount &&
+      lastShot.value?.turnId !== nextGame.turnCount
+    ) {
+      try {
+        const filter = contract.filters.ShotFired(gameId);
+        const events = await contract.queryFilter(filter, -10);
+        const latest = events[events.length - 1];
+        if (latest && "args" in latest) {
+          lastShot.value = {
+            turnId: nextGame.turnCount,
+            shooter: latest.args.shooter,
+            angle: Number(latest.args.angle),
+            power: Number(latest.args.power),
+            weapon: Number(latest.args.weapon) as WeaponType,
+            hitMap: Boolean(latest.args.hitMap),
+            impactX: Number(latest.args.impactX),
+            impactY: Number(latest.args.impactY),
+            damageDealt: Number(latest.args.damageDealt),
+            nextWind: Number(latest.args.nextWind),
+            preTerrain: [...prevGame.terrain],
+            preWind: prevGame.wind,
+          };
+        }
+      } catch {}
+    }
+
+    activeGame.value = nextGame;
   }
 
   function startPolling(gameId: number) {
     stopPolling();
     pollTimer = window.setInterval(async () => {
-      await loadGame(gameId);
-      await wallet.refreshBalance();
-    }, 2000);
+      const g = activeGame.value;
+      // Only poll while waiting for Player 2 OR waiting for the opponent's move
+      const shouldPoll =
+        !g ||
+        g.status === GameStatus.WaitingForPlayer ||
+        (g.status === GameStatus.Active &&
+          g.currentTurn.toLowerCase() !== wallet.address.value.toLowerCase());
+
+      if (!shouldPoll || isPollingInFlight) return;
+
+      isPollingInFlight = true;
+      try {
+        await loadGame(gameId);
+        await wallet.refreshBalance();
+      } finally {
+        isPollingInFlight = false;
+      }
+    }, 4000);
   }
 
   function stopPolling() {
@@ -128,13 +177,10 @@ export function useArtilleryGame() {
 
   async function createGame() {
     isTxPending.value = true;
-    statusMessage.value = "MINTING ARENA & FUNDING GASLESS SESSION KEY...";
+    statusMessage.value = "DEPLOYING ARENA...";
     try {
-      const sessionWallet = wallet.getOrCreateSessionWallet("shellshock_pending_session");
       const contract = new Contract(CONTRACT_ADDRESS, ARTILLERY_ABI, wallet.getSigner());
-      const tx = await contract.createGame(sessionWallet.address, {
-        value: joinFee.value,
-      });
+      const tx = await contract.createGame({ value: joinFee.value });
       const receipt = await tx.wait();
 
       let createdId: number | null = null;
@@ -148,11 +194,9 @@ export function useArtilleryGame() {
       }
 
       if (createdId === null) {
-        const nextId = Number(await contract.nextGameId());
-        createdId = nextId - 1;
+        createdId = Number(await contract.nextGameId()) - 1;
       }
 
-      wallet.promotePendingSessionKey(createdId);
       await loadGame(createdId);
       startPolling(createdId);
       await wallet.refreshBalance();
@@ -168,11 +212,8 @@ export function useArtilleryGame() {
     isTxPending.value = true;
     statusMessage.value = `JOINING ARENA #${gameId}...`;
     try {
-      const sessionWallet = wallet.getOrCreateSessionWallet(`shellshock_session_${gameId}`);
       const contract = new Contract(CONTRACT_ADDRESS, ARTILLERY_ABI, wallet.getSigner());
-      const tx = await contract.joinGame(gameId, sessionWallet.address, {
-        value: joinFee.value,
-      });
+      const tx = await contract.joinGame(gameId, { value: joinFee.value });
       await tx.wait();
 
       await loadGame(gameId);
@@ -189,15 +230,19 @@ export function useArtilleryGame() {
   async function fireShot(angle: number, power: number, weapon: WeaponType) {
     if (!activeGame.value) return;
     const gameId = activeGame.value.gameId;
+    const preTerrain = [...activeGame.value.terrain];
+    const preWind = activeGame.value.wind;
+    const weaponSpec = WEAPONS[weapon] ?? WEAPONS[0];
+
     isTxPending.value = true;
-    statusMessage.value = "FIRING PAYLOAD VIA GASLESS SESSION KEY...";
+    statusMessage.value = `FIRING ${weaponSpec.name} (${weaponSpec.costLabel})...`;
 
     try {
-      // Uses pre-funded local session key so MetaMask never pops up mid-match
-      const sessionSigner = wallet.getSessionSignerForGame(gameId);
-      const contract = new Contract(CONTRACT_ADDRESS, ARTILLERY_ABI, sessionSigner);
+      const contract = new Contract(CONTRACT_ADDRESS, ARTILLERY_ABI, wallet.getSigner());
 
-      const tx = await contract.fire(gameId, angle, power, weapon);
+      const tx = await contract.fire(gameId, angle, power, weapon, {
+        value: weaponSpec.costWei,
+      });
       const receipt = await tx.wait();
 
       for (const log of receipt.logs) {
@@ -205,6 +250,7 @@ export function useArtilleryGame() {
           const parsed = contract.interface.parseLog(log);
           if (parsed?.name === "ShotFired") {
             lastShot.value = {
+              turnId: activeGame.value.turnCount + 1,
               shooter: parsed.args.shooter,
               angle: Number(parsed.args.angle),
               power: Number(parsed.args.power),
@@ -214,6 +260,8 @@ export function useArtilleryGame() {
               impactY: Number(parsed.args.impactY),
               damageDealt: Number(parsed.args.damageDealt),
               nextWind: Number(parsed.args.nextWind),
+              preTerrain,
+              preWind,
             };
           }
         } catch {}

@@ -17,8 +17,7 @@ const aimPower = ref<number>(55);
 const selectedWeapon = ref<WeaponType>(WeaponType.Standard);
 
 onMounted(async () => {
-  // Auto-connect Ganache Dev Burner #0 on boot
-  await wallet.connectBurner(0);
+  await wallet.connectMetaMask(handleWalletChanged);
   await game.refreshLobby();
 });
 

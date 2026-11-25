@@ -22,7 +22,9 @@ const props = defineProps<{
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 let animFrameId = 0;
 
-// Active projectile & explosion particle animations
+// Visual terrain buffer: freezes during projectile flight and carves out on impact
+const renderedTerrain = ref<number[]>([...props.game.terrain]);
+
 interface Particle {
   x: number;
   y: number;
@@ -42,18 +44,32 @@ let activeProjectile: {
 let particles: Particle[] = [];
 let floatingPopup: { x: number; y: number; text: string; life: number } | null = null;
 
+// Sync renderedTerrain whenever game terrain updates and no projectile is mid-flight
+watch(
+  () => props.game.terrain,
+  (newTerrain) => {
+    if (!activeProjectile) {
+      renderedTerrain.value = [...newTerrain];
+    }
+  },
+  { deep: true },
+);
+
 watch(
   () => props.lastShot,
   (shot) => {
     if (!shot) return;
+    // Freeze pre-impact terrain so projectile flies against the terrain it actually hit
+    renderedTerrain.value = [...shot.preTerrain];
+
     const isP1Shooter = shot.shooter.toLowerCase() === props.game.player1.toLowerCase();
     const startCol = isP1Shooter ? props.game.p1X : props.game.p2X;
     const sim = simulateShotPreview(
-      props.game.terrain,
+      shot.preTerrain,
       startCol,
       shot.angle,
       shot.power,
-      props.game.wind,
+      shot.preWind,
       shot.weapon,
     );
     const weaponSpec = WEAPONS[shot.weapon] ?? WEAPONS[0];
@@ -67,6 +83,9 @@ watch(
 );
 
 function spawnExplosion(wx: number, wy: number, color: string, dmg: number) {
+  // Now apply the post-impact terrain crater!
+  renderedTerrain.value = [...props.game.terrain];
+
   for (let i = 0; i < 36; i++) {
     const a = Math.random() * Math.PI * 2;
     const spd = 2 + Math.random() * 8;
@@ -90,6 +109,7 @@ function render() {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
 
+  const terrain = renderedTerrain.value;
   const W = canvas.width;
   const H = canvas.height;
   const scaleX = W / WORLD_WIDTH;
@@ -98,11 +118,9 @@ function render() {
   const toCanvasX = (wx: number) => wx * scaleX;
   const toCanvasY = (wy: number) => H - wy * scaleY;
 
-  // 1. Deep Synthwave Sky Background
   ctx.fillStyle = "#060814";
   ctx.fillRect(0, 0, W, H);
 
-  // Subtle background grid
   ctx.strokeStyle = "rgba(34, 211, 238, 0.06)";
   ctx.lineWidth = 1;
   for (let gx = 0; gx < W; gx += 40) {
@@ -118,7 +136,6 @@ function render() {
     ctx.stroke();
   }
 
-  // 2. Neon Terrain Columns & Glowing Ridge
   const colW = W / MAP_WIDTH;
   const grad = ctx.createLinearGradient(0, H * 0.25, 0, H);
   grad.addColorStop(0, "rgba(217, 70, 239, 0.45)");
@@ -127,7 +144,7 @@ function render() {
   ctx.beginPath();
   ctx.moveTo(0, H);
   for (let i = 0; i < MAP_WIDTH; i++) {
-    const h = props.game.terrain[i] ?? 200;
+    const h = terrain[i] ?? 200;
     const x0 = i * colW;
     const y0 = toCanvasY(h);
     ctx.lineTo(x0, y0);
@@ -138,10 +155,9 @@ function render() {
   ctx.fillStyle = grad;
   ctx.fill();
 
-  // Glowing neon terrain outline
   ctx.beginPath();
   for (let i = 0; i < MAP_WIDTH; i++) {
-    const h = props.game.terrain[i] ?? 200;
+    const h = terrain[i] ?? 200;
     const x0 = i * colW;
     const y0 = toCanvasY(h);
     if (i === 0) ctx.moveTo(x0, y0);
@@ -155,11 +171,10 @@ function render() {
   ctx.stroke();
   ctx.shadowBlur = 0;
 
-  // 3. Draw Tanks
   drawTank(
     ctx,
     toCanvasX(props.game.p1X * 100 + 50),
-    toCanvasY(props.game.terrain[props.game.p1X] ?? 200),
+    toCanvasY(terrain[props.game.p1X] ?? 200),
     "#22d3ee",
     props.playerRole === "P1" ? props.aimAngle : 45,
     "P1",
@@ -168,17 +183,16 @@ function render() {
   drawTank(
     ctx,
     toCanvasX(props.game.p2X * 100 + 50),
-    toCanvasY(props.game.terrain[props.game.p2X] ?? 200),
+    toCanvasY(terrain[props.game.p2X] ?? 200),
     "#fb7185",
     props.playerRole === "P2" ? props.aimAngle : 135,
     "P2",
   );
 
-  // 4. Live Aiming Arc Preview (when it's your turn)
   if (props.isMyTurn && !activeProjectile) {
     const startCol = props.playerRole === "P1" ? props.game.p1X : props.game.p2X;
     const preview = simulateShotPreview(
-      props.game.terrain,
+      terrain,
       startCol,
       props.aimAngle,
       props.aimPower,
@@ -197,7 +211,6 @@ function render() {
     ctx.globalAlpha = 1;
   }
 
-  // 5. Active Fired Projectile Trail
   if (activeProjectile) {
     const p = activeProjectile.points[activeProjectile.index];
     if (p) {
@@ -218,7 +231,6 @@ function render() {
     }
   }
 
-  // 6. Explosion Particles & Damage Popups
   particles.forEach((pt) => {
     pt.x += pt.vx * 8;
     pt.y += pt.vy * 4;
@@ -258,7 +270,6 @@ function drawTank(
   ctx.shadowColor = color;
   ctx.shadowBlur = 12;
 
-  // Turret barrel
   const rad = (angleDeg * Math.PI) / 180;
   ctx.strokeStyle = color;
   ctx.lineWidth = 4;
@@ -267,13 +278,11 @@ function drawTank(
   ctx.lineTo(cx + Math.cos(rad) * 22, cy - 10 - Math.sin(rad) * 22);
   ctx.stroke();
 
-  // Tank hull
   ctx.fillStyle = color;
   ctx.beginPath();
   ctx.roundRect(cx - 14, cy - 12, 28, 12, 4);
   ctx.fill();
 
-  // Label
   ctx.shadowBlur = 0;
   ctx.fillStyle = "#e2e8f0";
   ctx.font = "bold 11px Orbitron, sans-serif";
@@ -296,7 +305,6 @@ onUnmounted(() => {
     class="relative w-full rounded-xl overflow-hidden border border-cyan-500/40 neon-border-cyan bg-slate-950"
   >
     <canvas ref="canvasRef" width="1120" height="450" class="w-full h-[320px] sm:h-[420px] block" />
-    <!-- CRT Scanlines Overlay -->
     <div class="crt-scanlines pointer-events-none absolute inset-0 opacity-40" />
   </div>
 </template>
