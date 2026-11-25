@@ -269,10 +269,6 @@ export function useArtilleryGame() {
     try {
       const contract = new Contract(CONTRACT_ADDRESS, ARTILLERY_ABI, wallet.getSigner());
 
-      const estimatedGas = await contract.fire.estimateGas(gameId, angle, power, weapon, {
-        value: weaponSpec.costWei,
-      });
-
       const tx = await contract.fire(gameId, angle, power, weapon, {
         value: weaponSpec.costWei,
         gasLimit: 500_000n,
