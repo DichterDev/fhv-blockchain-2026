@@ -4,171 +4,230 @@ pragma solidity ^0.8.34;
 import {ArtilleryMath} from "./ArtilleryMath.sol";
 
 contract OnChainArtillery {
-    using ArtilleryMath for uint16[32];
+  using ArtilleryMath for uint16[32];
 
-    enum GameStatus {
-        WaitingForPlayer,
-        Active,
-        Finished
+  enum GameStatus {
+    WaitingForPlayer,
+    Active,
+    Finished
+  }
+
+  struct Game {
+    address player1;
+    address player2;
+    address p1SessionKey;
+    address p2SessionKey;
+    address currentTurn;
+    address winner;
+    GameStatus status;
+    uint8 p1X;
+    uint8 p2X;
+    uint8 p1Hp;
+    uint8 p2Hp;
+    int8 wind;
+    uint8 turnCount;
+    uint256 lastMoveBlock;
+    uint256 prizePool;
+    uint16[32] terrain;
+  }
+
+  uint256 public constant JOIN_FEE = 0.001 ether;
+  uint256 public constant SESSION_GAS_STIPEND = 0.0004 ether; // Funded from JOIN_FEE for gasless turns
+    uint256 public constant TURN_TIMEOUT_BLOCKS = 25;
+
+  uint256 public nextGameId;
+  mapping(uint256 => Game) private games;
+
+  event GameCreated(uint256 indexed gameId, address indexed player1, address sessionKey);
+  event GameJoined(uint256 indexed gameId, address indexed player2, address sessionKey, int8 initialWind);
+  event ShotFired(
+    uint256 indexed gameId,
+    address indexed shooter,
+    uint8 angle,
+    uint8 power,
+    uint8 weapon,
+    bool hitMap,
+    uint8 impactX,
+    uint16 impactY,
+    uint8 damageDealt,
+    int8 nextWind
+  );
+  event GameEnded(uint256 indexed gameId, address indexed winner, uint256 payout, string reason);
+
+  error InvalidGameState();
+  error IncorrectEntryFee();
+  error NotYourTurn();
+  error InvalidShotParameters();
+  error TimeoutNotReached();
+  error TransferFailed();
+
+  /// @notice Creates a new 1v1 game lobby, collects JOIN_FEE, and funds the player's gasless session key
+  function createGame(address sessionKey) external payable returns (uint256 gameId) {
+    if (msg.value != JOIN_FEE) revert IncorrectEntryFee();
+
+    gameId = nextGameId++;
+    Game storage g = games[gameId];
+    g.player1 = msg.sender;
+    g.p1SessionKey = sessionKey;
+    g.status = GameStatus.WaitingForPlayer;
+    g.p1X = 4;
+    g.p2X = 27;
+    g.p1Hp = 100;
+    g.p2Hp = 100;
+    g.prizePool = msg.value - SESSION_GAS_STIPEND;
+
+    uint256 seed = uint256(keccak256(abi.encode(block.prevrandao, msg.sender, gameId)));
+    g.terrain = ArtilleryMath.generateTerrain(seed);
+
+    if (sessionKey != address(0) && sessionKey != msg.sender) {
+      (bool ok, ) = payable(sessionKey).call{value: SESSION_GAS_STIPEND}("");
+      if (!ok) revert TransferFailed();
+    } else {
+      g.prizePool += SESSION_GAS_STIPEND;
     }
 
-    struct Game {
-        address player1;
-        address player2;
-        address currentTurn;
-        address winner;
-        GameStatus status;
-        uint8 p1X;
-        uint8 p2X;
-        uint8 p1Hp;
-        uint8 p2Hp;
-        int8 wind;
-        uint8 turnCount;
-        uint256 lastMoveBlock;
-        uint16[32] terrain;
+    emit GameCreated(gameId, msg.sender, sessionKey);
+  }
+
+  /// @notice Second player joins, pays JOIN_FEE, and gets their gasless session key funded
+  function joinGame(uint256 gameId, address sessionKey) external payable {
+    if (msg.value != JOIN_FEE) revert IncorrectEntryFee();
+
+    Game storage g = games[gameId];
+    if (g.status != GameStatus.WaitingForPlayer || g.player1 == msg.sender) {
+      revert InvalidGameState();
     }
 
-    uint256 public constant TURN_TIMEOUT_BLOCKS = 25; // ~5 minutes on Sepolia
-    uint256 public nextGameId;
-    mapping(uint256 => Game) private games;
+    g.player2 = msg.sender;
+    g.p2SessionKey = sessionKey;
+    g.status = GameStatus.Active;
+    g.currentTurn = g.player1;
+    g.lastMoveBlock = block.number;
+    g.wind = _rollWind(gameId, 0);
+    g.prizePool += (msg.value - SESSION_GAS_STIPEND);
 
-    event GameCreated(uint256 indexed gameId, address indexed player1);
-    event GameJoined(uint256 indexed gameId, address indexed player2, int8 initialWind);
-    event ShotFired(
-        uint256 indexed gameId,
-        address indexed shooter,
-        uint8 angle,
-        uint8 power,
-        uint8 weapon,
-        bool hitMap,
-        uint8 impactX,
-        uint16 impactY,
-        uint8 damageDealt,
-        int8 nextWind
-    );
-    event GameEnded(uint256 indexed gameId, address indexed winner, string reason);
-
-    error InvalidGameState();
-    error NotYourTurn();
-    error InvalidShotParameters();
-    error TimeoutNotReached();
-
-    /// @notice Creates a new 1v1 game lobby
-    function createGame() external returns (uint256 gameId) {
-        gameId = nextGameId++;
-        Game storage g = games[gameId];
-        g.player1 = msg.sender;
-        g.status = GameStatus.WaitingForPlayer;
-        g.p1X = 4;
-        g.p2X = 27;
-        g.p1Hp = 100;
-        g.p2Hp = 100;
-
-        uint256 seed = uint256(keccak256(abi.encode(block.prevrandao, msg.sender, gameId)));
-        g.terrain = ArtilleryMath.generateTerrain(seed);
-
-        emit GameCreated(gameId, msg.sender);
+    if (sessionKey != address(0) && sessionKey != msg.sender) {
+      (bool ok, ) = payable(sessionKey).call{value: SESSION_GAS_STIPEND}("");
+      if (!ok) revert TransferFailed();
+    } else {
+      g.prizePool += SESSION_GAS_STIPEND;
     }
 
-    /// @notice Second player joins an open game and starts the match
-    function joinGame(uint256 gameId) external {
-        Game storage g = games[gameId];
-        if (g.status != GameStatus.WaitingForPlayer || g.player1 == msg.sender) {
-            revert InvalidGameState();
-        }
+    emit GameJoined(gameId, msg.sender, sessionKey, g.wind);
+  }
 
-        g.player2 = msg.sender;
-        g.status = GameStatus.Active;
-        g.currentTurn = g.player1;
-        g.lastMoveBlock = block.number;
-        g.wind = _rollWind(gameId, 0);
+  /// @notice Callable by either the player's main wallet OR their pre-funded gasless session key
+  function fire(uint256 gameId, uint8 angle, uint8 power, uint8 weapon) external {
+    Game storage g = games[gameId];
+    if (g.status != GameStatus.Active) revert InvalidGameState();
 
-        emit GameJoined(gameId, msg.sender, g.wind);
-    }
+    bool isP1Turn = g.currentTurn == g.player1;
+    bool authorized = isP1Turn
+      ? (msg.sender == g.player1 || msg.sender == g.p1SessionKey)
+      : (msg.sender == g.player2 || msg.sender == g.p2SessionKey);
 
-    /// @notice Single-transaction turn: aim, choose weapon, fire, and pass turn
-    /// @param angle Firing angle in degrees (0 = right, 90 = straight up, 180 = left)
-    /// @param power Shot power from 1 to 100
-    /// @param weapon 0 = Standard, 1 = Heavy Mortar, 2 = Bunker Buster
-    function fire(uint256 gameId, uint8 angle, uint8 power, uint8 weapon) external {
-        Game storage g = games[gameId];
-        if (g.status != GameStatus.Active) revert InvalidGameState();
-        if (msg.sender != g.currentTurn) revert NotYourTurn();
-        if (angle > 180 || power == 0 || power > 100 || weapon > 2) {
-            revert InvalidShotParameters();
-        }
+      if (!authorized) revert NotYourTurn();
+      if (angle > 180 || power == 0 || power > 100 || weapon > 2) {
+        revert InvalidShotParameters();
+      }
 
-        bool isP1 = msg.sender == g.player1;
-        uint8 shooterX = isP1 ? g.p1X : g.p2X;
-        uint8 targetX = isP1 ? g.p2X : g.p1X;
+      uint8 shooterX = isP1Turn ? g.p1X : g.p2X;
+      uint8 targetX = isP1Turn ? g.p2X : g.p1X;
 
-        (bool hitMap, uint8 impactX, uint16 impactY) = ArtilleryMath.simulateShot(
-            g.terrain,
-            shooterX,
-            angle,
-            power,
-            g.wind,
-            weapon
-        );
+      (bool hitMap, uint8 impactX, uint16 impactY) = ArtilleryMath.simulateShot(
+        g.terrain,
+        shooterX,
+        angle,
+        power,
+        g.wind,
+        weapon
+      );
 
-        uint8 damage = 0;
-        if (hitMap) {
-            damage = g.terrain.applyImpact(impactX, targetX, weapon);
-            if (isP1) {
-                g.p2Hp = g.p2Hp > damage ? g.p2Hp - damage : 0;
-            } else {
-                g.p1Hp = g.p1Hp > damage ? g.p1Hp - damage : 0;
-            }
-        }
-
-        g.turnCount += 1;
-        g.lastMoveBlock = block.number;
-        g.wind = _rollWind(gameId, g.turnCount);
-
-        emit ShotFired(
-            gameId,
-            msg.sender,
-            angle,
-            power,
-            weapon,
-            hitMap,
-            impactX,
-            impactY,
-            damage,
-            g.wind
-        );
-
-        if (g.p1Hp == 0 || g.p2Hp == 0) {
-            g.status = GameStatus.Finished;
-            g.winner = g.p2Hp == 0 ? g.player1 : g.player2;
-            emit GameEnded(gameId, g.winner, "KO");
+      uint8 damage = 0;
+      if (hitMap) {
+        damage = g.terrain.applyImpact(impactX, targetX, weapon);
+        if (isP1Turn) {
+          g.p2Hp = g.p2Hp > damage ? g.p2Hp - damage : 0;
         } else {
-            g.currentTurn = isP1 ? g.player2 : g.player1;
+          g.p1Hp = g.p1Hp > damage ? g.p1Hp - damage : 0;
         }
-    }
+      }
 
-    /// @notice Claim victory if the opponent stalls past TURN_TIMEOUT_BLOCKS
-    function claimTimeoutWin(uint256 gameId) external {
-        Game storage g = games[gameId];
-        if (g.status != GameStatus.Active) revert InvalidGameState();
-        if (msg.sender != g.player1 && msg.sender != g.player2) revert InvalidGameState();
-        if (msg.sender == g.currentTurn) revert NotYourTurn();
-        if (block.number <= g.lastMoveBlock + TURN_TIMEOUT_BLOCKS) {
-            revert TimeoutNotReached();
-        }
+      g.turnCount += 1;
+      g.lastMoveBlock = block.number;
+      g.wind = _rollWind(gameId, g.turnCount);
 
+      emit ShotFired(
+        gameId,
+        g.currentTurn,
+        angle,
+        power,
+        weapon,
+        hitMap,
+        impactX,
+        impactY,
+        damage,
+        g.wind
+      );
+
+      if (g.p1Hp == 0 || g.p2Hp == 0) {
         g.status = GameStatus.Finished;
-        g.winner = msg.sender;
-        emit GameEnded(gameId, msg.sender, "Timeout");
+        g.winner = g.p2Hp == 0 ? g.player1 : g.player2;
+        _payoutWinner(gameId, g, "KO");
+      } else {
+        g.currentTurn = isP1Turn ? g.player2 : g.player1;
+      }
+  }
+
+  /// @notice Claim victory and prize pool if opponent stalls past TURN_TIMEOUT_BLOCKS
+  function claimTimeoutWin(uint256 gameId) external {
+    Game storage g = games[gameId];
+    if (g.status != GameStatus.Active) revert InvalidGameState();
+
+    bool isP1 = msg.sender == g.player1 || msg.sender == g.p1SessionKey;
+    bool isP2 = msg.sender == g.player2 || msg.sender == g.p2SessionKey;
+    if (!isP1 && !isP2) revert InvalidGameState();
+
+    address callerPlayer = isP1 ? g.player1 : g.player2;
+    if (callerPlayer == g.currentTurn) revert NotYourTurn();
+    if (block.number <= g.lastMoveBlock + TURN_TIMEOUT_BLOCKS) {
+      revert TimeoutNotReached();
     }
 
-    /// @notice Returns full game state including the 32-column terrain array for frontend rendering
-    function getGame(uint256 gameId) external view returns (Game memory) {
-        return games[gameId];
-    }
+    g.status = GameStatus.Finished;
+    g.winner = callerPlayer;
+    _payoutWinner(gameId, g, "Timeout");
+  }
 
-    function _rollWind(uint256 gameId, uint8 turn) private view returns (int8) {
-        uint256 rand = uint256(keccak256(abi.encode(block.prevrandao, gameId, turn)));
-        return int8(int256(rand % 13) - 6); // Wind between -6 and +6
+  /// @notice Allows Player 1 to cancel an unjoined lobby and get a full refund
+  function cancelGame(uint256 gameId) external {
+    Game storage g = games[gameId];
+    if (g.status != GameStatus.WaitingForPlayer || msg.sender != g.player1) {
+      revert InvalidGameState();
     }
+    g.status = GameStatus.Finished;
+    uint256 refund = g.prizePool;
+    g.prizePool = 0;
+
+    (bool ok, ) = payable(g.player1).call{value: refund}("");
+    if (!ok) revert TransferFailed();
+    emit GameEnded(gameId, address(0), 0, "Cancelled");
+  }
+
+  function getGame(uint256 gameId) external view returns (Game memory) {
+    return games[gameId];
+  }
+
+  function _payoutWinner(uint256 gameId, Game storage g, string memory reason) private {
+    uint256 payout = g.prizePool;
+    g.prizePool = 0;
+    (bool ok, ) = payable(g.winner).call{value: payout}("");
+    if (!ok) revert TransferFailed();
+    emit GameEnded(gameId, g.winner, payout, reason);
+  }
+
+  function _rollWind(uint256 gameId, uint8 turn) private view returns (int8) {
+    uint256 rand = uint256(keccak256(abi.encode(block.prevrandao, gameId, turn)));
+    return int8(int256(rand % 13) - 6);
+  }
 }
