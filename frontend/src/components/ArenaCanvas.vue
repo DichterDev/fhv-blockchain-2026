@@ -22,7 +22,6 @@ const props = defineProps<{
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 let animFrameId = 0;
 
-// Plain non-reactive buffer: freezes during projectile flight and carves out on impact
 let renderedTerrain: number[] = [...(props.game.terrain ?? [])];
 
 interface Particle {
@@ -44,14 +43,32 @@ let activeProjectile: {
 let particles: Particle[] = [];
 let floatingPopup: { x: number; y: number; text: string; life: number } | null = null;
 
-// Sync renderedTerrain whenever game terrain updates and no projectile is mid-flight
+function scheduleRender() {
+  if (!animFrameId) {
+    animFrameId = requestAnimationFrame(() => {
+      animFrameId = 0;
+      render();
+    });
+  }
+}
+
+// Re-render whenever game state, aim, weapon, or turn changes
 watch(
-  () => props.game.terrain,
-  (newTerrain) => {
-    if (!activeProjectile && Array.isArray(newTerrain)) {
-      renderedTerrain = [...newTerrain];
+  () => [
+    props.game,
+    props.aimAngle,
+    props.aimPower,
+    props.selectedWeapon,
+    props.isMyTurn,
+    props.playerRole,
+  ],
+  () => {
+    if (!activeProjectile && Array.isArray(props.game.terrain)) {
+      renderedTerrain = [...props.game.terrain];
     }
+    scheduleRender();
   },
+  { deep: true },
 );
 
 watch(
@@ -81,6 +98,7 @@ watch(
     if (!sim?.points?.length) {
       renderedTerrain = [...(props.game.terrain ?? [])];
       activeProjectile = null;
+      scheduleRender();
       return;
     }
 
@@ -90,6 +108,8 @@ watch(
       color: weaponSpec.color,
       damage: shot.damageDealt ?? 0,
     };
+
+    scheduleRender();
   },
 );
 
@@ -271,7 +291,10 @@ function render() {
     if (floatingPopup.life <= 0) floatingPopup = null;
   }
 
-  animFrameId = requestAnimationFrame(render);
+  // Only keep looping while projectile, explosion particles, or damage popup are animating
+  if (activeProjectile || particles.length > 0 || floatingPopup) {
+    scheduleRender();
+  }
 }
 
 function drawTank(
@@ -308,7 +331,7 @@ function drawTank(
 }
 
 onMounted(() => {
-  animFrameId = requestAnimationFrame(render);
+  scheduleRender();
 });
 
 onUnmounted(() => {

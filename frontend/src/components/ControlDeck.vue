@@ -7,6 +7,13 @@ const angle = defineModel<number>("angle", { required: true });
 const power = defineModel<number>("power", { required: true });
 const weapon = defineModel<WeaponType>("weapon", { required: true });
 
+const sliderAngle = computed({
+  get: () => 180 - angle.value,
+  set: (val: number) => {
+    angle.value = 180 - val;
+  },
+});
+
 defineProps<{
   canFire: boolean;
   isTxPending: boolean;
@@ -27,7 +34,6 @@ const activeWeaponSpec = computed(() => WEAPONS[weapon.value] ?? WEAPONS[0]);
   <div
     class="grid grid-cols-1 lg:grid-cols-12 gap-4 p-4 rounded-xl border border-fuchsia-500/40 bg-slate-950/90 neon-border-pink"
   >
-    <!-- Weapon Selector with ETH Cost -->
     <div class="lg:col-span-4 flex flex-col gap-2">
       <span class="text-xs text-fuchsia-400 font-arcade tracking-wider">
         01 // SELECT ORDNANCE
@@ -60,7 +66,6 @@ const activeWeaponSpec = computed(() => WEAPONS[weapon.value] ?? WEAPONS[0]);
       </div>
     </div>
 
-    <!-- Angle & Power Sliders -->
     <div class="lg:col-span-5 flex flex-col justify-center gap-3 px-1">
       <div>
         <div class="flex justify-between text-xs mb-1">
@@ -70,7 +75,7 @@ const activeWeaponSpec = computed(() => WEAPONS[weapon.value] ?? WEAPONS[0]);
           <span class="text-cyan-200 font-bold">{{ angle }}°</span>
         </div>
         <input
-          v-model.number="angle"
+          v-model.number="sliderAngle"
           type="range"
           min="0"
           max="180"
@@ -95,7 +100,6 @@ const activeWeaponSpec = computed(() => WEAPONS[weapon.value] ?? WEAPONS[0]);
       </div>
     </div>
 
-    <!-- Fire Trigger & Wind/Timeout Telemetry -->
     <div class="lg:col-span-3 flex flex-col justify-between gap-2">
       <div
         class="flex items-center justify-between px-3 py-1.5 rounded bg-slate-900 border border-slate-800 text-xs"
