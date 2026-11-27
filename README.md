@@ -8,7 +8,7 @@ Turn-based two-player artillery game deployed on Ethereum (Sepolia Testnet), whe
 
 - **Network:** Ethereum Sepolia Testnet (`Chain ID: 11155111`)
 - **Contract Address:** `0x1132dc10bf7D687563c6f56345E677047b088Ab5`
-- **Contract ABI:** [abi.json](/blockchain/artifacts/contracts/OnChainArtillery.sol/OnChainArtillery.json)
+- **Contract ABI:** [abi.json](/blockchain/ignition/deployments/chain-11155111/artifacts/ArtilleryModule#OnChainArtillery.json)
 
 ---
 
